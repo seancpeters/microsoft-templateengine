@@ -1,16 +1,20 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.TemplateEngine.Abstractions.Mount;
+using Microsoft.TemplateEngine.Abstractions.Runner;
 
 namespace Microsoft.TemplateEngine.Abstractions
 {
-    public interface IGenerator : IComponent
+    public interface IGenerator : IIdentifiedComponent
     {
-        Task Create(ITemplate template, IParameterSet parameters);
+        Task Create(IOrchestrator basicOrchestrator, ITemplate template, IParameterSet parameters);
 
         IParameterSet GetParametersForTemplate(ITemplate template);
 
-        IEnumerable<ITemplate> GetTemplatesFromSource(IConfiguredTemplateSource source);
+        IEnumerable<ITemplate> GetTemplatesFromSource(IMountPoint source);
 
-        bool TryGetTemplateFromSource(IConfiguredTemplateSource target, string name, out ITemplate template);
+        bool TryGetTemplateFromConfig(IFileSystemInfo config, out ITemplate template);
+
+        bool TryGetTemplateFromSource(IMountPoint target, string name, out ITemplate template);
     }
 }

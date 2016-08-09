@@ -5,14 +5,18 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Microsoft.TemplateEngine.Abstractions;
+using Microsoft.TemplateEngine.Abstractions.Mount;
+using Microsoft.TemplateEngine.Abstractions.Runner;
 
 namespace Microsoft.TemplateEngine.Orchestrator.VsTemplates
 {
     public class VsTemplateGenerator : IGenerator
     {
-        public string Name => "VS Templates";
+        private static readonly Guid GeneratorId = new Guid("F1D3CC4A-F22A-4AAE-9607-9D3696266C46");
 
-        private void RecurseContent(XElement parentNode, string sourcePath, string targetPath, string defaultName, string useName, IDictionary<string, string> fileMap, IList<string> copyOnly)
+        public Guid Id => GeneratorId;
+
+        private static void RecurseContent(XElement parentNode, string sourcePath, string targetPath, string defaultName, string useName, IDictionary<string, string> fileMap, IList<string> copyOnly)
         {
             IEnumerable<XElement> projects = parentNode.Elements().Where(x => x.Name.LocalName == "Project");
             IEnumerable<XElement> items = parentNode.Elements().Where(y => y.Name.LocalName == "ProjectItem");
@@ -60,7 +64,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.VsTemplates
             }
         }
 
-        public Task Create(ITemplate template, IParameterSet parameters)
+        public Task Create(IOrchestrator basicOrchestrator, ITemplate template, IParameterSet parameters)
         {
             ProcessParameters(parameters);
             VsTemplate tmplt = (VsTemplate)template;
@@ -87,7 +91,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.VsTemplates
             List<string> copyOnly = new List<string>();
             RecurseContent(templateContent, "", "", tmplt.DefaultName, parameters.ParameterValues[projectNameParameter], fileMap, copyOnly);
 
-            VsTemplateOrchestrator o = new VsTemplateOrchestrator();
+            VsTemplateOrchestrator o = new VsTemplateOrchestrator(basicOrchestrator);
             o.Run(new VsTemplateGlobalRunSpec(parameters, fileMap, copyOnly), tmplt.SourceFile.Parent, Directory.GetCurrentDirectory());
             return Task.FromResult(true);
         }
@@ -105,46 +109,48 @@ namespace Microsoft.TemplateEngine.Orchestrator.VsTemplates
             return result;
         }
 
-        public IEnumerable<ITemplate> GetTemplatesFromSource(IConfiguredTemplateSource source)
+        public IEnumerable<ITemplate> GetTemplatesFromSource(IMountPoint source)
         {
-            using (IDisposable<ITemplateSourceFolder> root = source.Root)
-            {
-                return GetTemplatesFromDir(source, root.Value).ToList();
-            }
+            return GetTemplatesFromDir(source.Root).ToList();
         }
 
-        public bool TryGetTemplateFromSource(IConfiguredTemplateSource target, string name, out ITemplate template)
+        public bool TryGetTemplateFromConfig(IFileSystemInfo config, out ITemplate template)
+        {
+            IFile file = config as IFile;
+
+            if (file == null)
+            {
+                template = null;
+                return false;
+            }
+
+            try
+            {
+                template = new VsTemplate(file, file.MountPoint, this);
+                return true;
+            }
+            catch
+            {
+            }
+
+            template = null;
+            return false;
+        }
+
+        public bool TryGetTemplateFromSource(IMountPoint target, string name, out ITemplate template)
         {
             template = GetTemplatesFromSource(target).FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
             return template != null;
         }
 
-        private IEnumerable<ITemplate> GetTemplatesFromDir(IConfiguredTemplateSource source, ITemplateSourceFolder folder)
+        private IEnumerable<ITemplate> GetTemplatesFromDir(IDirectory folder)
         {
-            foreach (ITemplateSourceEntry entry in folder.Children)
+            foreach (IFile file in folder.EnumerateFiles(".vstemplate", SearchOption.AllDirectories))
             {
-                if (entry.Kind == TemplateSourceEntryKind.File && entry.FullPath.EndsWith(".vstemplate"))
+                ITemplate template;
+                if (TryGetTemplateFromConfig(file, out template))
                 {
-                    VsTemplate tmp = null;
-                    try
-                    {
-                        tmp = new VsTemplate((ITemplateSourceFile)entry, source, this);
-                    }
-                    catch
-                    {
-                    }
-
-                    if (tmp != null)
-                    {
-                        yield return tmp;
-                    }
-                }
-                else if (entry.Kind == TemplateSourceEntryKind.Folder)
-                {
-                    foreach (ITemplate template in GetTemplatesFromDir(source, (ITemplateSourceFolder)entry))
-                    {
-                        yield return template;
-                    }
+                    yield return template;
                 }
             }
         }

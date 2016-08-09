@@ -4,8 +4,10 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.TemplateEngine.Abstractions;
+using Microsoft.TemplateEngine.Abstractions.Engine;
+using Microsoft.TemplateEngine.Abstractions.Mount;
+using Microsoft.TemplateEngine.Abstractions.Runner;
 using Microsoft.TemplateEngine.Core;
-using Microsoft.TemplateEngine.Runner;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -13,13 +15,16 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 {
     public class RunnableProjectGenerator : IGenerator
     {
-        public string Name => "Runnable Project";
+        private static readonly Guid GeneratorId = new Guid("0C434DF7-E2CB-4DEE-B216-D7C58C8EB4B3");
 
-        public Task Create(ITemplate template, IParameterSet parameters)
+        public Guid Id => GeneratorId;
+
+        public Task Create(IOrchestrator basicOrchestrator, ITemplate template, IParameterSet parameters)
         {
+            //Console.ReadLine();
             RunnableProjectTemplate tmplt = (RunnableProjectTemplate)template;
 
-            RunnableProjectOrchestrator o = new RunnableProjectOrchestrator();
+            RunnableProjectOrchestrator o = new RunnableProjectOrchestrator(basicOrchestrator);
             GlobalRunSpec configRunSpec = new GlobalRunSpec(new FileSource(), tmplt.ConfigFile.Parent, parameters, tmplt.Config.Config, tmplt.Config.Special);
             IOperationProvider[] providers = configRunSpec.Operations.ToArray();
 
@@ -38,7 +43,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             {
                 GlobalRunSpec runSpec = new GlobalRunSpec(source, tmplt.ConfigFile.Parent, parameters, m.Config, m.Special);
                 string target = Path.Combine(Directory.GetCurrentDirectory(), source.Target);
-                o.Run(runSpec, tmplt.ConfigFile.Parent.GetDirectoryAtRelativePath(source.Source), target);
+                o.Run(runSpec, tmplt.ConfigFile.Parent.DirectoryInfo(source.Source), target);
             }
 
             return Task.FromResult(true);
@@ -50,15 +55,38 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             return new ParameterSet(tmplt.Config);
         }
 
-        public IEnumerable<ITemplate> GetTemplatesFromSource(IConfiguredTemplateSource source)
+        public IEnumerable<ITemplate> GetTemplatesFromSource(IMountPoint source)
         {
-            using (IDisposable<ITemplateSourceFolder> root = source.Root)
-            {
-                return GetTemplatesFromDir(source, root.Value).ToList();
-            }
+            return GetTemplatesFromDir(source.Root).ToList();
         }
 
-        private JObject ReadConfigModel(ITemplateSourceFile file)
+        public bool TryGetTemplateFromConfig(IFileSystemInfo config, out ITemplate template)
+        {
+            IFile file = config as IFile;
+
+            if (file == null)
+            {
+                template = null;
+                return false;
+            }
+
+            try
+            {
+                JObject srcObject = ReadConfigModel(file);
+
+                template = new RunnableProjectTemplate(srcObject, this, file, RunnableProjectConfigConverter.FromJObject(srcObject));
+
+                return true;
+            }
+            catch
+            {
+            }
+
+            template = null;
+            return false;
+        }
+
+        private JObject ReadConfigModel(IFile file)
         {
             using (Stream s = file.OpenRead())
             using (TextReader tr = new StreamReader(s, true))
@@ -68,46 +96,19 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             }
         }
 
-        private IEnumerable<ITemplate> GetTemplatesFromDir(IConfiguredTemplateSource source, ITemplateSourceFolder folder)
+        private IEnumerable<ITemplate> GetTemplatesFromDir(IDirectory folder)
         {
-            foreach (ITemplateSourceEntry entry in folder.Children)
+            foreach (IFile file in folder.EnumerateFiles(".netnew.json", SearchOption.AllDirectories))
             {
-                if (entry.Kind == TemplateSourceEntryKind.File && entry.Name.Equals(".netnew.json", StringComparison.OrdinalIgnoreCase))
+                ITemplate tmp;
+                if (TryGetTemplateFromConfig(file, out tmp))
                 {
-                    RunnableProjectTemplate tmp = null;
-                    try
-                    {
-                        ITemplateSourceFile file = (ITemplateSourceFile)entry;
-                        JObject srcObject = ReadConfigModel(file);
-
-                        tmp = new RunnableProjectTemplate(srcObject, this, source, file, srcObject.ToObject<IRunnableProjectConfig>(new JsonSerializer
-                        {
-                            Converters =
-                            {
-                                new RunnableProjectConfigConverter()
-                            }
-                        }));
-                    }
-                    catch
-                    {
-                    }
-
-                    if (tmp != null)
-                    {
-                        yield return tmp;
-                    }
-                }
-                else if (entry.Kind == TemplateSourceEntryKind.Folder)
-                {
-                    foreach (ITemplate template in GetTemplatesFromDir(source, (ITemplateSourceFolder)entry))
-                    {
-                        yield return template;
-                    }
+                    yield return tmp;
                 }
             }
         }
 
-        public bool TryGetTemplateFromSource(IConfiguredTemplateSource target, string name, out ITemplate template)
+        public bool TryGetTemplateFromSource(IMountPoint target, string name, out ITemplate template)
         {
             template = GetTemplatesFromSource(target).FirstOrDefault(x => string.Equals(x.Name, name, StringComparison.OrdinalIgnoreCase));
             return template != null;

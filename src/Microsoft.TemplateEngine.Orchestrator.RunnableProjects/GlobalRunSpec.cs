@@ -4,9 +4,11 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.TemplateEngine.Abstractions;
+using Microsoft.TemplateEngine.Abstractions.Engine;
+using Microsoft.TemplateEngine.Abstractions.Mount;
+using Microsoft.TemplateEngine.Abstractions.Runner;
 using Microsoft.TemplateEngine.Core;
 using Microsoft.TemplateEngine.Core.Expressions.Cpp;
-using Microsoft.TemplateEngine.Runner;
 using Newtonsoft.Json.Linq;
 
 namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
@@ -19,7 +21,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         public IReadOnlyList<IOperationProvider> Operations { get; }
 
-        public VariableCollection RootVariableCollection { get; }
+        public IVariableCollection RootVariableCollection { get; }
 
         public IReadOnlyDictionary<IPathMatcher, IRunSpec> Special { get; }
 
@@ -32,9 +34,9 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             return Rename.TryGetValue(sourceRelPath, out targetRelPath);
         }
 
-        public GlobalRunSpec(FileSource source, ITemplateSourceFolder templateRoot, IParameterSet parameters, IReadOnlyDictionary<string, JObject> operations, IReadOnlyDictionary<string, Dictionary<string, JObject>> special)
+        public GlobalRunSpec(FileSource source, IDirectory templateRoot, IParameterSet parameters, IReadOnlyDictionary<string, JObject> operations, IReadOnlyDictionary<string, Dictionary<string, JObject>> special)
         {
-            int expect = source.Include?.Length ?? 0;
+            int expect = source.Include?.Count ?? 0;
             List<IPathMatcher> includes = new List<IPathMatcher>(expect);
             if (source.Include != null && expect > 0)
             {
@@ -45,7 +47,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             }
             Include = includes;
 
-            expect = source.CopyOnly?.Length ?? 0;
+            expect = source.CopyOnly?.Count ?? 0;
             List<IPathMatcher> copyOnlys = new List<IPathMatcher>(expect);
             if (source.CopyOnly != null && expect > 0)
             {
@@ -56,7 +58,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             }
             CopyOnly = copyOnlys;
 
-            expect = source.Exclude?.Length ?? 0;
+            expect = source.Exclude?.Count ?? 0;
             List<IPathMatcher> excludes = new List<IPathMatcher>(expect);
             if (source.Exclude != null && expect > 0)
             {
@@ -67,11 +69,9 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             }
             Exclude = excludes;
 
-            Rename = source.Rename != null
-                ? new Dictionary<string, string>(source.Rename, StringComparer.OrdinalIgnoreCase)
-                : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Rename = source.Rename ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-            VariableCollection variables;
+            IVariableCollection variables;
             Operations = ProcessOperations(parameters, templateRoot, operations, out variables);
             RootVariableCollection = variables;
             Dictionary<IPathMatcher, IRunSpec> specials = new Dictionary<IPathMatcher, IRunSpec>();
@@ -81,7 +81,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                 foreach (KeyValuePair<string, Dictionary<string, JObject>> specialEntry in special)
                 {
                     IReadOnlyList<IOperationProvider> specialOps = null;
-                    VariableCollection specialVariables = variables;
+                    IVariableCollection specialVariables = variables;
 
                     if (specialEntry.Value != null)
                     {
@@ -96,7 +96,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             Special = specials;
         }
 
-        private IReadOnlyList<IOperationProvider> ProcessOperations(IParameterSet parameters, ITemplateSourceFolder templateRoot, IReadOnlyDictionary<string, JObject> operations, out VariableCollection variables)
+        private IReadOnlyList<IOperationProvider> ProcessOperations(IParameterSet parameters, IDirectory templateRoot, IReadOnlyDictionary<string, JObject> operations, out IVariableCollection variables)
         {
             List<IOperationProvider> result = new List<IOperationProvider>();
             JObject variablesSection = operations["variables"];
@@ -112,9 +112,9 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
             if (operations.TryGetValue("include", out data))
             {
-                string startToken = data["start"].ToString();
-                string endToken = data["end"].ToString();
-                result.Add(new Include(startToken, endToken, templateRoot.OpenFile));
+                string startToken = data.ToString("start");
+                string endToken = data.ToString("end");
+                result.Add(new Include(startToken, endToken, x => templateRoot.FileInfo(x).OpenRead()));
             }
 
             if (operations.TryGetValue("regions", out data))
@@ -123,24 +123,24 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                 foreach (JToken child in regionSettings.Children())
                 {
                     JObject setting = (JObject)child;
-                    string start = setting["start"].ToString();
-                    string end = setting["end"].ToString();
-                    bool include = setting["include"]?.ToObject<bool>() ?? false;
-                    bool regionTrim = setting["trim"]?.ToObject<bool>() ?? false;
-                    bool regionWholeLine = setting["wholeLine"]?.ToObject<bool>() ?? false;
+                    string start = setting.ToString("start");
+                    string end = setting.ToString("end");
+                    bool include = setting.ToBool("include");
+                    bool regionTrim = setting.ToBool("trim");
+                    bool regionWholeLine = setting.ToBool("wholeLine");
                     result.Add(new Region(start, end, include, regionWholeLine, regionTrim));
                 }
             }
 
             if (operations.TryGetValue("conditionals", out data))
             {
-                string ifToken = data["if"].ToString();
-                string elseToken = data["else"].ToString();
-                string elseIfToken = data["elseif"].ToString();
-                string endIfToken = data["endif"].ToString();
-                string evaluatorName = data["evaluator"].ToString();
-                bool trim = data["trim"]?.ToObject<bool>() ?? false;
-                bool wholeLine = data["wholeLine"]?.ToObject<bool>() ?? false;
+                string ifToken = data.ToString("if");
+                string elseToken = data.ToString("else");
+                string elseIfToken = data.ToString("elseif");
+                string endIfToken = data.ToString("endif");
+                string evaluatorName = data.ToString("evaluator");
+                bool trim = data.ToBool("trim");
+                bool wholeLine = data.ToBool("wholeLine");
                 ConditionEvaluator evaluator = CppStyleEvaluatorDefinition.CppStyleEvaluator;
 
                 switch (evaluatorName)
@@ -159,11 +159,11 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                 {
                     JObject innerData = (JObject)property.Value;
                     string flag = property.Name;
-                    string on = innerData["on"]?.ToString() ?? string.Empty;
-                    string off = innerData["off"]?.ToString() ?? string.Empty;
-                    string onNoEmit = innerData["onNoEmit"]?.ToString() ?? string.Empty;
-                    string offNoEmit = innerData["offNoEmit"]?.ToString() ?? string.Empty;
-                    string defaultStr = innerData["default"]?.ToString();
+                    string on = innerData.ToString("on") ?? string.Empty;
+                    string off = innerData.ToString("off") ?? string.Empty;
+                    string onNoEmit = innerData.ToString("onNoEmit") ?? string.Empty;
+                    string offNoEmit = innerData.ToString("offNoEmit") ?? string.Empty;
+                    string defaultStr = innerData.ToString("default");
                     bool? @default = null;
 
                     if (defaultStr != null)
@@ -202,9 +202,9 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             return result;
         }
 
-        private VariableCollection HandleVariables(IParameterSet parameters, JObject data, List<IOperationProvider> result, bool allParameters = false)
+        private static IVariableCollection HandleVariables(IParameterSet parameters, JObject data, List<IOperationProvider> result, bool allParameters = false)
         {
-            VariableCollection vc = VariableCollection.Root();
+            IVariableCollection vc = VariableCollection.Root();
             JToken expandToken;
             if (data.TryGetValue("expand", out expandToken) && expandToken.Type == JTokenType.Boolean && expandToken.ToObject<bool>())
             {
@@ -212,7 +212,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             }
 
             JObject sources = (JObject)data["sources"];
-            string fallbackFormat = data["fallbackFormat"]?.ToString();
+            string fallbackFormat = data.ToString("fallbackFormat");
             Dictionary<string, VariableCollection> collections = new Dictionary<string, VariableCollection>();
 
             foreach (JProperty prop in sources.Properties())
@@ -247,9 +247,9 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
             foreach (JToken order in ((JArray)data["order"]).Children())
             {
-                VariableCollection current = collections[order.ToString()];
+                IVariableCollection current = collections[order.ToString()];
 
-                VariableCollection tmp = current;
+                IVariableCollection tmp = current;
                 while (tmp.Parent != null)
                 {
                     tmp = tmp.Parent;
@@ -296,8 +296,8 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             switch (def["action"].ToString())
             {
                 case "new":
-                    int low = int.Parse(def["low"]?.ToString() ?? "0");
-                    int high = int.Parse(def["high"]?.ToString() ?? int.MaxValue.ToString());
+                    int low = def.ToInt32("low", 0);
+                    int high = def.ToInt32("high", int.MaxValue);
                     Random rnd = new Random();
                     int val = rnd.Next(low, high);
                     string value = val.ToString();
@@ -315,15 +315,15 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         private void HandleRegexAction(string variableName, JObject variablesSection, JObject def, RunnableProjectGenerator.ParameterSet parameters)
         {
-            VariableCollection vars = HandleVariables(parameters, variablesSection, null, true);
-            string action = def["action"]?.ToString();
+            IVariableCollection vars = HandleVariables(parameters, variablesSection, null, true);
+            string action = def.ToString("action");
             string value = null;
 
             switch (action)
             {
                 case "replace":
-                    string sourceVar = def["source"]?.ToString();
-                    JArray steps = def["steps"] as JArray;
+                    string sourceVar = def.ToString("source");
+                    JArray steps = def.Get<JArray>("steps");
                     object working;
                     if (!vars.TryGetValue(sourceVar, out working))
                     {
@@ -343,8 +343,8 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                         foreach (JToken child in steps)
                         {
                             JObject map = (JObject) child;
-                            string regex = map["regex"]?.ToString();
-                            string replaceWith = map["replacement"]?.ToString();
+                            string regex = map.ToString("regex");
+                            string replaceWith = map.ToString("replacement");
 
                             value = Regex.Replace(value, regex, replaceWith);
                         }
@@ -364,8 +364,8 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         private static void HandleNowAction(string variableName, JObject def, RunnableProjectGenerator.ParameterSet parameters)
         {
-            string format = def["action"]?.ToString();
-            bool utc = bool.Parse(def["utc"]?.ToString() ?? "False");
+            string format = def.ToString("action");
+            bool utc = def.ToBool("utc");
             DateTime time = utc ? DateTime.UtcNow : DateTime.Now;
             string value = time.ToString(format);
             Parameter p = new Parameter
@@ -380,7 +380,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         private static void HandleConstantAction(string variableName, JObject def, RunnableProjectGenerator.ParameterSet parameters)
         {
-            string value = def["action"].ToString();
+            string value = def.ToString("action");
             Parameter p = new Parameter
             {
                 IsVariable = true,
@@ -394,15 +394,15 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
         private void HandleEvaluateAction(string variableName, JObject variablesSection, JObject def, RunnableProjectGenerator.ParameterSet parameters)
         {
             ConditionEvaluator evaluator = CppStyleEvaluatorDefinition.CppStyleEvaluator;
-            VariableCollection vars = HandleVariables(parameters, variablesSection, null, true);
-            switch (def["evaluator"]?.ToString() ?? "C++")
+            IVariableCollection vars = HandleVariables(parameters, variablesSection, null, true);
+            switch (def.ToString("evaluator") ?? "C++")
             {
                 case "C++":
                     evaluator = CppStyleEvaluatorDefinition.CppStyleEvaluator;
                     break;
             }
 
-            byte[] data = Encoding.UTF8.GetBytes(def["action"].ToString());
+            byte[] data = Encoding.UTF8.GetBytes(def.ToString("action"));
             int len = data.Length;
             int pos = 0;
             IProcessorState state = new ProcessorState(vars, data, Encoding.UTF8);
@@ -420,7 +420,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         private class ProcessorState : IProcessorState
         {
-            public ProcessorState(VariableCollection vars, byte[] buffer, Encoding encoding)
+            public ProcessorState(IVariableCollection vars, byte[] buffer, Encoding encoding)
             {
                 Config = new EngineConfig(vars);
                 CurrentBuffer = buffer;
@@ -429,7 +429,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                 EncodingConfig = new EncodingConfig(Config, encoding);
             }
 
-            public EngineConfig Config { get; }
+            public IEngineConfig Config { get; }
 
             public byte[] CurrentBuffer { get; private set; }
 
@@ -439,7 +439,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
             public Encoding Encoding { get; set; }
 
-            public EncodingConfig EncodingConfig { get; }
+            public IEncodingConfig EncodingConfig { get; }
 
             public void AdvanceBuffer(int bufferPosition)
             {
@@ -448,27 +448,27 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                 CurrentBuffer = tmp;
             }
 
-            public void SeekBackUntil(SimpleTrie match)
+            public void SeekBackUntil(ITokenTrie match)
             {
                 throw new NotImplementedException();
             }
 
-            public void SeekBackUntil(SimpleTrie match, bool consume)
+            public void SeekBackUntil(ITokenTrie match, bool consume)
             {
                 throw new NotImplementedException();
             }
 
-            public void SeekBackWhile(SimpleTrie match)
+            public void SeekBackWhile(ITokenTrie match)
             {
                 throw new NotImplementedException();
             }
 
-            public void SeekForwardThrough(SimpleTrie trie, ref int bufferLength, ref int currentBufferPosition)
+            public void SeekForwardThrough(ITokenTrie trie, ref int bufferLength, ref int currentBufferPosition)
             {
                 throw new NotImplementedException();
             }
 
-            public void SeekForwardWhile(SimpleTrie trie, ref int bufferLength, ref int currentBufferPosition)
+            public void SeekForwardWhile(ITokenTrie trie, ref int bufferLength, ref int currentBufferPosition)
             {
                 throw new NotImplementedException();
             }
@@ -476,10 +476,10 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
         private static void HandleGuidAction(string variableName, JObject def, RunnableProjectGenerator.ParameterSet parameters)
         {
-            switch (def["action"].ToString())
+            switch (def.ToString("action"))
             {
                 case "new":
-                    string fmt = def["format"]?.ToString();
+                    string fmt = def.ToString("format");
                     if (fmt != null)
                     {
                         Guid g = Guid.NewGuid();
