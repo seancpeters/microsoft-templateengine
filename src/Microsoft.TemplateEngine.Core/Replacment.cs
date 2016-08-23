@@ -10,11 +10,13 @@ namespace Microsoft.TemplateEngine.Core
     {
         private readonly string _match;
         private readonly string _replaceWith;
+        private string _id;
 
-        public Replacment(string match, string replaceWith)
+        public Replacment(string match, string replaceWith, string id)
         {
             _match = match;
             _replaceWith = replaceWith;
+            _id = id;
         }
 
         public IOperation GetOperation(Encoding encoding, IProcessorState processorState)
@@ -27,7 +29,7 @@ namespace Microsoft.TemplateEngine.Core
                 return null;
             }
 
-            return new Impl(token, replaceWith);
+            return new Impl(token, replaceWith, _id);
         }
 
         private class Impl : IOperation
@@ -35,14 +37,17 @@ namespace Microsoft.TemplateEngine.Core
             private readonly byte[] _replacement;
             private readonly byte[] _token;
 
-            public Impl(byte[] token, byte[] replaceWith)
+            public Impl(byte[] token, byte[] replaceWith, string id)
             {
                 _replacement = replaceWith;
                 _token = token;
+                Id = id;
                 Tokens = new[] {token};
             }
 
             public IReadOnlyList<byte[]> Tokens { get; }
+
+            public string Id { get; private set; }
 
             public int HandleMatch(IProcessorState processor, int bufferLength, ref int currentBufferPosition, int token, Stream target)
             {

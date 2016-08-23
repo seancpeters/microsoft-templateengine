@@ -114,7 +114,10 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             {
                 string startToken = data.ToString("start");
                 string endToken = data.ToString("end");
-                result.Add(new Include(startToken, endToken, x => templateRoot.FileInfo(x).OpenRead()));
+
+                // TODO: setup the config with the operation id, and read it here:
+                string operationId = "TEMP_IncludeOperationId";
+                result.Add(new Include(startToken, endToken, x => templateRoot.FileInfo(x).OpenRead(), operationId));
             }
 
             if (operations.TryGetValue("regions", out data))
@@ -128,12 +131,15 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                     bool include = setting.ToBool("include");
                     bool regionTrim = setting.ToBool("trim");
                     bool regionWholeLine = setting.ToBool("wholeLine");
-                    result.Add(new Region(start, end, include, regionWholeLine, regionTrim));
+
+                    // TODO: setup the config with the operation id, and read it here
+                    result.Add(new Region(start, end, include, regionWholeLine, regionTrim, null));
                 }
             }
 
             if (operations.TryGetValue("conditionals", out data))
             {
+                // TODO (scp): add getting the special tokens and the disable operation
                 string ifToken = data.ToString("if");
                 string elseToken = data.ToString("else");
                 string elseIfToken = data.ToString("elseif");
@@ -150,7 +156,14 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                         break;
                 }
 
-                result.Add(new Conditional(ifToken, elseToken, elseIfToken, endIfToken, wholeLine, trim, evaluator));
+                ConditionalTokens tokenVariants = new ConditionalTokens();
+                tokenVariants.IfTokens = new[] { ifToken };
+                tokenVariants.ElseTokens = new[] { elseToken };
+                tokenVariants.ElseIfTokens = new[] { elseIfToken };
+                tokenVariants.EndIfTokens = new[] { endIfToken };
+
+                // TODO: setup the config with the operation id, and read it here
+                result.Add(new Conditional(tokenVariants, wholeLine, trim, evaluator, null));
             }
 
             if (operations.TryGetValue("flags", out data))
@@ -171,7 +184,8 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                         @default = bool.Parse(defaultStr);
                     }
 
-                    result.Add(new SetFlag(flag, on, off, onNoEmit, offNoEmit, @default));
+                    // TODO: setup the config with the operation id, and read it here
+                    result.Add(new SetFlag(flag, on, off, onNoEmit, offNoEmit, null, @default));
                 }
             }
 
@@ -192,7 +206,8 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
                             throw new Exception($"Unable to find a parameter value called \"{param.Name}\"", ex);
                         }
 
-                        Replacment r = new Replacment(property.Name, val);
+                        // TODO: setup the config with the operation id, and read it here
+                        Replacment r = new Replacment(property.Name, val, null);
                         result.Add(r);
                     }
                 }
@@ -208,7 +223,7 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
             JToken expandToken;
             if (data.TryGetValue("expand", out expandToken) && expandToken.Type == JTokenType.Boolean && expandToken.ToObject<bool>())
             {
-                result?.Add(new ExpandVariables());
+                result?.Add(new ExpandVariables(null));
             }
 
             JObject sources = (JObject)data["sources"];
@@ -441,11 +456,13 @@ namespace Microsoft.TemplateEngine.Orchestrator.RunnableProjects
 
             public IEncodingConfig EncodingConfig { get; }
 
-            public void AdvanceBuffer(int bufferPosition)
+            public bool AdvanceBuffer(int bufferPosition)
             {
                 byte[] tmp = new byte[CurrentBufferLength - bufferPosition];
                 Buffer.BlockCopy(CurrentBuffer, bufferPosition, tmp, 0, CurrentBufferLength - bufferPosition);
                 CurrentBuffer = tmp;
+
+                return true;
             }
 
             public void SeekBackUntil(ITokenTrie match)

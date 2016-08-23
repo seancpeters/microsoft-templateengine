@@ -107,12 +107,12 @@ namespace Microsoft.TemplateEngine.Core
 
         public IEncodingConfig EncodingConfig { get; private set; }
 
-        public void AdvanceBuffer(int bufferPosition)
+        public bool AdvanceBuffer(int bufferPosition)
         {
             if (CurrentBufferLength == 0)
             {
                 CurrentBufferPosition = 0;
-                return;
+                return false;
             }
 
             int offset = 0;
@@ -122,8 +122,11 @@ namespace Microsoft.TemplateEngine.Core
                 Array.Copy(CurrentBuffer, bufferPosition, CurrentBuffer, 0, offset);
             }
 
-            CurrentBufferLength = _source.Read(CurrentBuffer, offset, CurrentBuffer.Length - offset) + offset;
+            int bytesRead = _source.Read(CurrentBuffer, offset, CurrentBuffer.Length - offset);
+            CurrentBufferLength = bytesRead + offset;
             CurrentBufferPosition = 0;
+
+            return bytesRead != 0;
         }
 
         public bool Run()
@@ -159,9 +162,18 @@ namespace Microsoft.TemplateEngine.Core
                 }
 
                 IOperation op = _trie.GetOperation(CurrentBuffer, CurrentBufferLength, ref posedPosition, out token);
+                bool opEnabledFlag;
 
-                if (op != null)
+                if ((op != null) &&
+                    (op.Id == null
+                        || !Config.Flags.TryGetValue(op.Id, out opEnabledFlag)
+                        || opEnabledFlag))
                 {
+                    // the operation flag didn't exist, or it was true, meaning the operation is enabled. So do the usual.
+                    // (else do nothing, act as if there was no token).
+
+                    // Below here was everything before ignoring disabled operations.
+                    // If the operation is diabled, it's as if the token were just arbitrary text, so do nothing special with it.
                     int writeCount = CurrentBufferPosition - lastWritten;
 
                     if (writeCount > 0)
@@ -176,7 +188,7 @@ namespace Microsoft.TemplateEngine.Core
                     {
                         writtenSinceFlush += op.HandleMatch(this, CurrentBufferLength, ref posedPosition, token, _target);
                     }
-                    catch(Exception ex)
+                    catch (Exception ex)
                     {
                         throw new Exception($"Error running handler {op} at position {CurrentBufferPosition} in {Encoding.EncodingName} bytes of {Encoding.GetString(CurrentBuffer, 0, CurrentBufferLength)}.\n\nStart: {Encoding.GetString(CurrentBuffer, CurrentBufferPosition, CurrentBufferLength - CurrentBufferPosition)} \n\nCheck InnerException for details.", ex);
                     }
